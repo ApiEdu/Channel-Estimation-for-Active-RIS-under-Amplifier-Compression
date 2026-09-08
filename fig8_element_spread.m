@@ -15,12 +15,19 @@ kap_of = @(a) interp1(grid_A, kg, a, 'pchip');
 
 R = zeros(numel(sigA),4);
 for i = 1:numel(sigA)
-    As = P.Asat * 10.^(randn(1,P.N)*sigA(i)/20);       % per-element spread
-    o = struct('PT',PT,'model','rapp','Asat',As);
+    % A fresh spread is drawn inside every realization (opt.AsatSigma), so the
+    % curves average over the spread rather than over one arbitrary draw of it.
+    o = struct('PT',PT,'model','rapp','AsatSigma',sigA(i));
+
+    % A representative draw, used only to set the two single-scalar gains and
+    % the per-element oracle gain.
+    As = P.Asat * 10.^(randn(1,P.N)*sigA(i)/20);
+
     R(i,1) = sim_nmse(P, setfield(o,'gain',P.p));                 % conventional
     R(i,2) = sim_nmse(P, setfield(o,'gain',kap_of(P.Asat)));      % nominal kappa
     R(i,3) = sim_nmse(P, setfield(o,'gain',mean(kap_of(As))));    % mean kappa
-    R(i,4) = sim_nmse(P, setfield(o,'gain',kap_of(As)));          % per element
+    o4 = o; o4.AsatSigma = 0; o4.Asat = As; o4.gain = kap_of(As);
+    R(i,4) = sim_nmse(P, o4);                                     % per element
     fprintf('sigma_A=%3.1f dB | conv %7.2f nominal %7.2f mean %7.2f per-element %7.2f\n', ...
             sigA(i), 10*log10(R(i,:)));
 end
