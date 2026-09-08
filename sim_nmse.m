@@ -18,6 +18,10 @@ if ~isfield(opt,'model'),  opt.model  = 'rapp';  end
 if ~isfield(opt,'PT'),     opt.PT     = 1000;    end
 if ~isfield(opt,'gain'),   opt.gain   = P.p;     end
 if ~isfield(opt,'Asat'),   opt.Asat   = P.Asat;  end
+% opt.AsatSigma (dB) draws a FRESH per-element saturation spread in every
+% realization, so the result averages over the spread instead of describing
+% one arbitrary draw of it.
+if ~isfield(opt,'AsatSigma'), opt.AsatSigma = 0; end
 if ~isfield(opt,'a'),      opt.a      = P.p;     end
 if ~isfield(opt,'shrink'), opt.shrink = 1;       end
 if ~isfield(opt,'sumMSE'), opt.sumMSE = false;   end
@@ -42,17 +46,33 @@ for r = 1:P.nReal
     z = sqrt(P.sig2_2/2)*(randn(T,K) + 1j*randn(T,K));
 
     u = sqrt(PT)*repmat(b.',T,1) + v;                   % element input
+
+    % A fresh per-element saturation level per realization, so the result
+    % averages over the spread instead of describing one arbitrary draw.
+    AsatR = opt.Asat;
+    if opt.AsatSigma > 0
+        AsatR = P.Asat * 10.^(randn(1,N)*opt.AsatSigma/20);
+    end
+
     switch lower(opt.model)
         case 'linear', out = opt.a * u;
-        case 'rapp',   out = rapp(u, opt.a, opt.Asat, P.smooth);
-        case 'saleh',  out = saleh(u, opt.a, opt.Asat);
+        case 'rapp',   out = rapp(u, opt.a, AsatR, P.smooth);
+        case 'saleh',  out = saleh(u, opt.a, AsatR);
         otherwise,     error('unknown model');
     end
     Y = (out .* F) * G.' + sqrt(PT)*repmat(hd.',T,1) + z;
 
     bh = zeros(N,1);
     for k = 1:K
-        Phi = [ones(T,1), opt.gain * (F .* repmat(G(k,:),T,1))];
+        % opt.gain is a scalar for a uniform surface, or a 1xN / Nx1 vector
+        % when each element has its own Bussgang gain (per-element case).
+        % A vector must scale the columns element-wise, not multiply as a matrix.
+        if isscalar(opt.gain)
+            Phi = [ones(T,1), opt.gain * (F .* repmat(G(k,:),T,1))];
+        else
+            g = reshape(opt.gain, 1, N);                 % force a row of length N
+            Phi = [ones(T,1), (F .* repmat(G(k,:),T,1)) .* repmat(g,T,1)];
+        end
         est = (Phi \ Y(:,k)) / sqrt(PT);
         bh  = bh + est(2:end);
         if opt.sumMSE
